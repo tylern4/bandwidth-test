@@ -6,13 +6,31 @@
 #include <iostream>
 #include <fstream>
 #include <memory>
+#include <signal.h>
+#include <atomic>
 
 #ifdef HAVE_MPI
 #include <mpi.h>
 #endif
 
+// Global state for signal handling
+static std::atomic<bool> g_interrupted(false);
+static bt::BandwidthTester* g_tester = nullptr;
+
+void signal_handler(int signum) {
+    g_interrupted = true;
+    if (g_tester) {
+        g_tester->cleanup();
+        g_tester = nullptr;
+    }
+}
+
 int main(int argc, char* argv[]) {
     bt::Config config;
+
+    // Set up signal handlers
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
 
     // MPI initialization
 #ifdef HAVE_MPI
@@ -38,6 +56,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Register tester for signal handling
+    g_tester = tester.get();
+
     // Setup
     if (!tester->setup()) {
         std::cerr << "Error: failed to initialize " << tester->name() << " backend.\n";
@@ -56,7 +77,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Run benchmarks
-    auto results = tester->run_many(sizes, config.num_tests, config.warmup, config.verbose);
+    auto results = tester->run_many(sizes, config.num_tests, config.warmup, config.verbose,
+                                    config.transfer_mode, config.chunk_count);
 
     // Cleanup
     tester->cleanup();

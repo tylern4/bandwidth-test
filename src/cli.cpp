@@ -36,11 +36,12 @@ namespace bt
             return sizes;
         }
 
-        void parse_sizes(const std::string &str, std::vector<size_t> &out)
+        bool parse_sizes(const std::string &str, std::vector<size_t> &out)
         {
             out.clear();
             std::istringstream iss(str);
             std::string token;
+            bool has_errors = false;
             while (std::getline(iss, token, ','))
             {
                 if (token.empty())
@@ -48,12 +49,20 @@ namespace bt
                 try
                 {
                     size_t val = static_cast<size_t>(std::stoull(token));
+                    if (val == 0) {
+                        std::cerr << "Warning: skipping invalid message size 0\n";
+                        has_errors = true;
+                        continue;
+                    }
                     out.push_back(val);
                 }
-                catch (...)
+                catch (const std::exception& e)
                 {
+                    std::cerr << "Warning: could not parse message size '" << token << "': " << e.what() << "\n";
+                    has_errors = true;
                 }
             }
+            return !has_errors;
         }
 
     } // namespace
@@ -79,9 +88,9 @@ namespace bt
             ,
             ((option("-s", "--message-size") & value("BYTES", config.single_message_size)) % "Single message size in bytes" | (option("--sizes") & value("LIST", sizes_str)) % "Comma-separated list of message sizes" | (option("--sweep") & value("MIN", sweep_min) & value("MAX", sweep_max) & value("FACTOR", config.sweep_factor)) % "Sweep: min,max,factor (logarithmic)")
 
-            // transfer mode - optional exclusive group
+            // transfer mode options
             ,
-            ((option("--transfer-mode") & value("single|chunked", transfer_str)) % "single or chunked" | (option("--chunk-count") & value("N", config.chunk_count)) % "Number of chunks in chunked mode")
+            (option("--transfer-mode") & value("single|chunked", transfer_str)) % "single or chunked", (option("--chunk-count") & value("N", config.chunk_count)) % "Number of chunks in chunked mode"
 
             // backend selection
             ,
@@ -196,7 +205,15 @@ namespace bt
         // Parse sizes (comma-separated string -> vector)
         if (!sizes_str.empty())
         {
-            parse_sizes(sizes_str, config.message_sizes);
+            if (!parse_sizes(sizes_str, config.message_sizes))
+            {
+                // Warning already printed, but continue with valid sizes
+            }
+            if (config.message_sizes.empty())
+            {
+                std::cerr << "Error: no valid message sizes provided.\n";
+                return false;
+            }
         }
 
         // Parse message sizes
@@ -247,7 +264,8 @@ GENERAL OPTIONS:
 MESSAGE SIZES (choose one):
   -s, --message-size SIZE   Single message size in bytes                      (default: 1024)
       --sizes LIST          Comma-separated list of sizes                     (e.g. 64,256,1024)
-      --sweep MIN MAX FACT  Logarithmic sweep: MIN, MAX, and growth factor   (e.g. 64 1048576 2.0)
+      --sweep MIN MAX [F]   Logarithmic sweep: MIN, MAX, and growth factor (default: 2.0)
+                           (e.g. --sweep 64 1048576 2.0)
 
 TRANSFER MODE:
       --transfer-mode MODE  single or chunked                                 (default: single)

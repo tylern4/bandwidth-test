@@ -29,9 +29,9 @@ MpTester::MpTester(MpTopology topology, int num_ranks)
 }
 
 bool MpTester::setup() {
-    // Allocate buffers (will grow as needed)
-    send_buf_ = new std::vector<char>(65536);
-    recv_buf_ = new std::vector<char>(65536);
+    // Allocate buffers using unique_ptr (will grow as needed)
+    send_buf_ = std::make_unique<std::vector<char>>(MPI_INITIAL_BUFFER_SIZE);
+    recv_buf_ = std::make_unique<std::vector<char>>(MPI_INITIAL_BUFFER_SIZE);
 
     // MPI barrier to synchronize all ranks
     MPI_Barrier(MPI_COMM_WORLD);
@@ -57,12 +57,8 @@ TestResult MpTester::run_single(size_t message_size,
         if (chunk_size == 0) chunk_size = 1;
         double bytes_per_rt = 2.0 * static_cast<double>(message_size);
 
-        auto start_chunk = mpi_wtime();
-
-        std::vector<double> latencies;
-        latencies.reserve(num_tests);
-
-        for (int i = 0; i < num_tests; ++i) {
+        // Warmup
+        for (int w = 0; w < warmup; ++w) {
             if (world_rank_ == 0) {
                 for (int c = 0; c < chunk_count; ++c) {
                     MPI_Send(send_buf_->data(), static_cast<int>(chunk_size), MPI_BYTE, 1, 0, MPI_COMM_WORLD);
@@ -76,31 +72,60 @@ TestResult MpTester::run_single(size_t message_size,
             }
         }
 
-        auto end_chunk = mpi_wtime();
-        double total_latency = (end_chunk - start_chunk) * 1e6 / num_tests;
-        latencies.push_back(total_latency);
+        // Measured iterations - collect per-iteration latencies
+        std::vector<double> my_latencies;
+        my_latencies.reserve(num_tests);
 
-        if (world_rank_ != 0) {
-            latencies.clear();
-            latencies.push_back(0.0);
+        for (int i = 0; i < num_tests; ++i) {
+            auto start = mpi_wtime();
+
+            if (world_rank_ == 0) {
+                for (int c = 0; c < chunk_count; ++c) {
+                    MPI_Send(send_buf_->data(), static_cast<int>(chunk_size), MPI_BYTE, 1, 0, MPI_COMM_WORLD);
+                    MPI_Recv(recv_buf_->data(), static_cast<int>(chunk_size), MPI_BYTE, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                }
+            } else if (world_rank_ == 1) {
+                for (int c = 0; c < chunk_count; ++c) {
+                    MPI_Recv(recv_buf_->data(), static_cast<int>(chunk_size), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    MPI_Send(send_buf_->data(), static_cast<int>(chunk_size), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+                }
+            }
+
+            auto end = mpi_wtime();
+            double latency_us = end - start;  // Already in microseconds
+            my_latencies.push_back(latency_us);
         }
 
-        int rank = world_rank_;
-        int size = world_size_;
-        if (rank == 0) {
+        // Gather latencies from all ranks to rank 0
+        std::vector<double> all_latencies;
+        
+        if (world_rank_ == 0) {
+            all_latencies = my_latencies;
+            
+            // Gather from other ranks
+            int size = world_size_;
             for (int i = 1; i < size; ++i) {
-                std::vector<double> remote_lats(1);
-                MPI_Recv(remote_lats.data(), 1, MPI_DOUBLE, i, 100, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                if (remote_lats[0] > 0) {
-                    latencies.push_back(remote_lats[0]);
+                int count = 0;
+                MPI_Recv(&count, 1, MPI_INT, i, 100, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                if (count > 0) {
+                    std::vector<double> remote_lats(count);
+                    MPI_Recv(remote_lats.data(), count, MPI_DOUBLE, i, 101, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    all_latencies.insert(all_latencies.end(), remote_lats.begin(), remote_lats.end());
                 }
             }
         } else {
-            MPI_Send(&latencies[0], 1, MPI_DOUBLE, 0, 100, MPI_COMM_WORLD);
+            // Send latencies to rank 0
+            int count = static_cast<int>(my_latencies.size());
+            MPI_Send(&count, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
+            if (count > 0) {
+                MPI_Send(my_latencies.data(), count, MPI_DOUBLE, 0, 101, MPI_COMM_WORLD);
+            }
+            
+            // Return empty result for non-rank-0
             return compute_statistics(message_size, std::vector<double>(), bytes_per_rt);
         }
 
-        return compute_statistics(message_size, latencies, bytes_per_rt);
+        return compute_statistics(message_size, all_latencies, bytes_per_rt);
     }
 
     std::vector<double> latencies;
@@ -118,6 +143,8 @@ TestResult MpTester::run_single(size_t message_size,
         case MpTopology::STAR:
             compute_star_latency(message_size, latencies, num_tests);
             break;
+        default:
+            break;
     }
 
     double bytes_per_rt;
@@ -133,6 +160,9 @@ TestResult MpTester::run_single(size_t message_size,
             break;
         case MpTopology::STAR:
             bytes_per_rt = 2.0 * static_cast<double>(message_size) * (world_size_ - 1);
+            break;
+        default:
+            bytes_per_rt = 2.0 * static_cast<double>(message_size);
             break;
     }
 
@@ -244,27 +274,23 @@ void MpTester::compute_all_to_all_latency(size_t msg_size,
     int rank = world_rank_;
     int size = world_size_;
 
-    // Each rank sends to and receives from all others
-    // Use MPI_Sendrecv for point-to-point all-to-all simulation
-    std::vector<std::vector<char>> recv_bufs(size, std::vector<char>(msg_size));
+    // Use MPI_Alltoall for proper all-to-all communication
+    std::vector<char> send_buf(msg_size * size);
+    std::vector<char> recv_buf(msg_size * size);
+    
+    // Fill send buffer with data for each rank
+    for (int i = 0; i < size; ++i) {
+        std::fill(send_buf.begin() + i * msg_size, 
+                  send_buf.begin() + (i + 1) * msg_size, 
+                  static_cast<char>(rank & 0xFF));
+    }
 
     for (int i = 0; i < num_tests; ++i) {
         auto start = mpi_wtime();
 
-        for (int target = 0; target < size; ++target) {
-            if (target == rank) continue;
-            int source = target;  // symmetric
-
-            // This is a simplified all-to-all: each pair exchanges once
-            // For proper all-to-all, use MPI_Alltoall
-            if (target > rank) {
-                MPI_Sendrecv(send_buf_->data(), static_cast<int>(msg_size), MPI_BYTE,
-                             target, 0,
-                             recv_bufs[target].data(), static_cast<int>(msg_size), MPI_BYTE,
-                             target, 0,
-                             MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            }
-        }
+        MPI_Alltoall(send_buf.data(), static_cast<int>(msg_size), MPI_BYTE,
+                     recv_buf.data(), static_cast<int>(msg_size), MPI_BYTE,
+                     MPI_COMM_WORLD);
 
         auto end = mpi_wtime();
         my_lats.push_back(end - start);
@@ -327,13 +353,12 @@ void MpTester::compute_star_latency(size_t msg_size,
 }
 
 void MpTester::cleanup() {
-    delete send_buf_;
-    delete recv_buf_;
-    send_buf_ = nullptr;
-    recv_buf_ = nullptr;
+    // unique_ptr handles cleanup automatically
+    send_buf_.reset();
+    recv_buf_.reset();
 }
 
-bool MpTester::is_server() const {
+bool MpTester::is_leader() const {
     return world_rank_ == 0;
 }
 

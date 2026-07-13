@@ -11,9 +11,13 @@
 
 namespace bt {
 
+// MPI buffer constants
+constexpr size_t MPI_INITIAL_BUFFER_SIZE = 65536;
+
 class MpTester : public BandwidthTester {
 public:
     explicit MpTester(MpTopology topology, int num_ranks = 0);
+    ~MpTester() override = default;
 
     bool setup() override;
     TestResult run_single(size_t message_size,
@@ -24,7 +28,7 @@ public:
                           int chunk_count = 100) override;
     void cleanup() override;
     std::string name() const override { return "MPI"; }
-    bool is_server() const override;
+    bool is_leader() const override;
     int rank() const override { return world_rank_; }
 
 private:
@@ -44,8 +48,8 @@ private:
     MpTopology topology_;
     int world_size_ = 1;
     int world_rank_ = 0;
-    std::vector<char>* send_buf_ = nullptr;
-    std::vector<char>* recv_buf_ = nullptr;
+    std::unique_ptr<std::vector<char>> send_buf_;
+    std::unique_ptr<std::vector<char>> recv_buf_;
 };
 
 }  // namespace bt

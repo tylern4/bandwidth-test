@@ -20,8 +20,6 @@ struct Config {
     int num_tests = 100;
     std::vector<size_t> message_sizes;  // empty means use single_message_size
     size_t single_message_size = 1024;
-    size_t sweep_start = 64;
-    size_t sweep_end = 1048576;
     double sweep_factor = 2.0;  // logarithmic step factor
     int warmup = 5;
     std::string output_format = "text";

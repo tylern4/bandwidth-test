@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
-#include <numeric>
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -12,16 +11,16 @@ namespace bt {
 
 namespace {
 
-double percentile(std::vector<double> data, double pct) {
-    std::sort(data.begin(), data.end());
-    if (data.empty()) return 0.0;
-    if (data.size() == 1) return data[0];
-    double idx = (pct / 100.0) * (data.size() - 1);
+// Compute percentile from already-sorted data
+double percentile_from_sorted(const std::vector<double>& sorted_data, double pct) {
+    if (sorted_data.empty()) return 0.0;
+    if (sorted_data.size() == 1) return sorted_data[0];
+    double idx = (pct / 100.0) * (sorted_data.size() - 1);
     size_t lo = static_cast<size_t>(std::floor(idx));
     size_t hi = static_cast<size_t>(std::ceil(idx));
-    if (lo == hi) return data[lo];
+    if (lo == hi) return sorted_data[lo];
     double frac = idx - lo;
-    return data[lo] * (1.0 - frac) + data[hi] * frac;
+    return sorted_data[lo] * (1.0 - frac) + sorted_data[hi] * frac;
 }
 
 double mean(const std::vector<double>& v) {
@@ -52,9 +51,8 @@ TestResult compute_statistics(size_t message_size,
 
     if (latencies_us.empty()) return result;
 
-    // Bandwidth = bytes / time, convert to MB/s
-    // latency_us is in microseconds, bytes_per_round_trip is bytes
-    // bandwidth = bytes_per_round_trip / (latency_us * 1e-6) / 1e6 = bytes_per_round_trip / latency_us
+    // Compute bandwidths from latencies
+    // bandwidth = bytes_per_round_trip / latency_us (gives MB/s since latency is in us)
     std::vector<double> bandwidths;
     bandwidths.reserve(latencies_us.size());
     for (double lat : latencies_us) {
@@ -65,17 +63,20 @@ TestResult compute_statistics(size_t message_size,
 
     if (bandwidths.empty()) return result;
 
-    double m = mean(bandwidths);
-    result.mean_bandwidth_mbps = m;
+    // Bandwidth statistics
+    result.mean_bandwidth_mbps = mean(bandwidths);
     result.min_bandwidth_mbps = *std::min_element(bandwidths.begin(), bandwidths.end());
     result.max_bandwidth_mbps = *std::max_element(bandwidths.begin(), bandwidths.end());
 
-    // Latency stats
-    auto sorted = latencies_us;
-    result.median_latency_us = percentile(sorted, 50.0);
-    result.p50_latency_us = percentile(sorted, 50.0);
-    result.p95_latency_us = percentile(sorted, 95.0);
-    result.p99_latency_us = percentile(sorted, 99.0);
+    // Sort latencies once for all percentile calculations
+    auto sorted_latencies = latencies_us;
+    std::sort(sorted_latencies.begin(), sorted_latencies.end());
+
+    // Latency statistics (computed from sorted data)
+    result.median_latency_us = percentile_from_sorted(sorted_latencies, 50.0);
+    result.p50_latency_us = result.median_latency_us;  // Same as median
+    result.p95_latency_us = percentile_from_sorted(sorted_latencies, 95.0);
+    result.p99_latency_us = percentile_from_sorted(sorted_latencies, 99.0);
     result.stddev_latency_us = stddev(latencies_us);
 
     return result;

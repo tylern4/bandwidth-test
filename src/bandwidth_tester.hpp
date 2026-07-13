@@ -29,7 +29,9 @@ public:
     std::vector<TestResult> run_many(const std::vector<size_t>& sizes,
                                      int num_tests,
                                      int warmup,
-                                     bool verbose);
+                                     bool verbose,
+                                     TransferMode mode = TransferMode::SINGLE,
+                                     int chunk_count = 100);
 
     /// Cleanup resources.
     virtual void cleanup() = 0;
@@ -37,9 +39,9 @@ public:
     /// Return the backend name for logging.
     virtual std::string name() const = 0;
 
-    /// Check if the tester is running in server/leader mode.
-    /// Servers typically wait for clients to connect first.
-    virtual bool is_server() const = 0;
+    /// Check if the tester is running in leader mode.
+    /// Leaders typically wait for followers to connect first.
+    virtual bool is_leader() const = 0;
 
     /// Return the rank/index of this process.
     virtual int rank() const = 0;

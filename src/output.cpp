@@ -22,8 +22,18 @@ std::string fmt_us(double val) {
 }
 
 std::string fmt_bytes(size_t val) {
-    if (val >= 1048576) return std::to_string(val / 1048576) + "MB";
-    if (val >= 1024) return std::to_string(val / 1024) + "KB";
+    if (val >= 1048576) {
+        double mb = static_cast<double>(val) / 1048576.0;
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(1) << mb << "MB";
+        return oss.str();
+    }
+    if (val >= 1024) {
+        double kb = static_cast<double>(val) / 1024.0;
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(1) << kb << "KB";
+        return oss.str();
+    }
     return std::to_string(val) + "B";
 }
 

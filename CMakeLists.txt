@@ -146,14 +146,21 @@ endif()
 # Tests
 # ---------------------------------------------------------------------------
 if(BT_BUILD_TESTS)
+    # Fetch Catch2
+    FetchContent_Declare(
+        Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG v3.4.0
+    )
+    FetchContent_MakeAvailable(Catch2)
+
     enable_testing()
 
     add_executable(bandwidth-test-tests tests/test_benchmark.cpp src/benchmark.cpp)
     target_include_directories(bandwidth-test-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${catch2_SOURCE_DIR}/src
     )
-    target_link_libraries(bandwidth-test-tests PRIVATE Catch2 Catch2WithMain)
+    target_link_libraries(bandwidth-test-tests PRIVATE Catch2::Catch2WithMain)
 
     message(STATUS "Tests enabled: bandwidth-test-tests")
 endif()
