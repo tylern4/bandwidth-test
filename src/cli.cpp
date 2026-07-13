@@ -87,9 +87,9 @@ namespace bt
             ,
             (option("-b", "--backend") & value("zmq|mpi", backend_str)) % "zmq or mpi"
 
-            // zmq options - optional exclusive group
+            // zmq options
             ,
-            ((option("--zmq-addr") & value("ADDR", config.zmq_addr)) % "ZMQ address (default: tcp://localhost:5555)" | (option("--zmq-type") & value("TYPE", config.zmq_socket_type)) % "Socket type: pair, push/pull, req/rep" | (option("--zmq-transport") & value("TP", config.zmq_transport)) % "Transport: tcp, ipc, inproc" | (option("--zmq-mode") & value("server|client", zmq_mode_str)) % "server or client")
+            ((option("--zmq-addr") & value("ADDR", config.zmq_addr)) % "ZMQ address (default: tcp://localhost:5555)" , (option("--zmq-type") & value("TYPE", config.zmq_socket_type)) % "Socket type: pair, push/pull, req/rep" , (option("--zmq-transport") & value("TP", config.zmq_transport)) % "Transport: tcp, ipc, inproc" , (option("--zmq-mode") & value("server|client|single", zmq_mode_str)) % "server, client, or single")
 
             // mpi options - optional exclusive group
             ,
@@ -177,11 +177,20 @@ namespace bt
                 config.zmq_mode = ZmqMode::SERVER;
             else if (zmq_mode_str == "client")
                 config.zmq_mode = ZmqMode::CLIENT;
+            else if (zmq_mode_str == "single")
+                config.zmq_mode = ZmqMode::SINGLE;
             else
             {
-                std::cerr << "Error: unknown ZMQ mode '" << zmq_mode_str << "'. Use 'server' or 'client'." << std::endl;
+                std::cerr << "Error: unknown ZMQ mode '" << zmq_mode_str << "'. Use 'server', 'client', or 'single'." << std::endl;
                 return false;
             }
+        }
+
+        // Parse and validate ZMQ transport
+        if (config.zmq_transport != "tcp" && config.zmq_transport != "ipc" && config.zmq_transport != "inproc")
+        {
+            std::cerr << "Error: unknown ZMQ transport '" << config.zmq_transport << "'. Use 'tcp', 'ipc', or 'inproc'." << std::endl;
+            return false;
         }
 
         // Parse sizes (comma-separated string -> vector)
@@ -251,18 +260,35 @@ ZMQ OPTIONS:
       --zmq-addr ADDR       ZMQ address                                       (default: tcp://localhost:5555)
       --zmq-type TYPE       Socket type: pair, push/pull, req/rep             (default: pair)
       --zmq-transport TP    Transport: tcp, ipc, inproc                       (default: tcp)
-      --zmq-mode MODE       server or client                                  (default: server)
+      --zmq-mode MODE       server|client (two processes) or single (one)     (default: server)
+
+        TCP  (default)   Full address required (e.g., tcp://localhost:5555)
+        IPC                Path only (e.g., /tmp/bw-test). Faster than TCP for local.
+        inproc             Name only (e.g., bw-test). Same-process only, fastest.
+
+      --zmq-mode MODE      server, client, or single
+        server/client      Run two separate processes (TCP or IPC transport)
+        single             Run both server and client in one process (inproc only)
 
 MPI OPTIONS:
       --mpi-topology TOPO   ping-pong, ring, all-to-all, star                 (default: ping-pong)
       --mpi-ranks N         Number of MPI ranks (0 = auto-detect)
 
 EXAMPLES:
-  # Single test, ZMQ backend (run server in one terminal, client in another)
-  # Terminal 1:
+  # TCP transport (default, two processes)
+  # Terminal 1 - Server:
   ./bandwidth-test -b zmq --zmq-mode server -s 1024 -n 1000
-  # Terminal 2:
+  # Terminal 2 - Client:
   ./bandwidth-test -b zmq --zmq-mode client -s 1024 -n 1000
+
+  # IPC transport (faster local, two processes)
+  # Terminal 1 - Server:
+  ./bandwidth-test -b zmq --zmq-mode server --zmq-transport ipc --zmq-addr /tmp/bw-test
+  # Terminal 2 - Client:
+  ./bandwidth-test -b zmq --zmq-mode client --zmq-transport ipc --zmq-addr /tmp/bw-test
+
+  # inproc transport (fastest, single process)
+  ./bandwidth-test -b zmq --zmq-mode single --zmq-transport inproc --zmq-addr bw-test -s 1024 -n 1000
 
   # Sweep from 64B to 1MB, MPI backend, ring topology
   mpirun -np 2 ./bandwidth-test -b mpi --sweep 64 1048576 2.0 --mpi-topology ring

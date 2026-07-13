@@ -27,8 +27,8 @@ public:
                           int chunk_count = 100) override;
     void cleanup() override;
     std::string name() const override { return "ZMQ"; }
-    bool is_server() const override { return mode_ == ZmqMode::SERVER; }
-    int rank() const override { return is_server() ? 0 : 1; }
+    bool is_server() const override { return mode_ == ZmqMode::SERVER || mode_ == ZmqMode::SINGLE; }
+    int rank() const override { return mode_ == ZmqMode::CLIENT ? 1 : 0; }
 
 private:
     std::string zmq_type_string(const std::string& type);
@@ -39,6 +39,8 @@ private:
     std::string transport_;
     ZmqMode mode_;
     std::unique_ptr<zmq::context_t> context_;
+    std::unique_ptr<zmq::socket_t> server_socket_;
+    std::unique_ptr<zmq::socket_t> client_socket_;
     std::unique_ptr<zmq::socket_t> socket_;
 };
 

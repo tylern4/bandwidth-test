@@ -40,6 +40,12 @@ The ZMQ backend uses a client-server model. Run the server first, then the clien
 ./bandwidth-test -b zmq --zmq-mode client -s 1024 -n 1000
 ```
 
+For `inproc` transport, run both in a single process:
+
+```bash
+./bandwidth-test -b zmq --zmq-mode single --zmq-transport inproc --zmq-addr bw-test -s 1024 -n 1000
+```
+
 ### MPI Backend
 
 Run with mpirun/mpirun:
@@ -92,7 +98,25 @@ In chunked mode, the total message is split into N smaller chunks sent sequentia
 | `--zmq-addr ADDR` | ZMQ address | `tcp://localhost:5555` |
 | `--zmq-type TYPE` | Socket type: pair, push/pull, req/rep | pair |
 | `--zmq-transport TP` | Transport: tcp, ipc, inproc | tcp |
-| `--zmq-mode MODE` | server or client | server |
+| `--zmq-mode MODE` | server, client, or single | server |
+
+#### Transports
+
+| Transport | Description | Address Format | Process Model |
+|-----------|-------------|----------------|---------------|
+| `tcp` (default) | TCP/IP networking | Full address: `tcp://localhost:5555` | Two processes (server + client) |
+| `ipc` | Inter-process communication via Unix domain sockets | Path only: `/tmp/bw-test` | Two processes (server + client) |
+| `inproc` | In-process communication (fastest, no network overhead) | Name only: `myaddr` | Single process (`--zmq-mode single`) |
+
+**Note**: `ipc` is faster than `tcp` for local communication as it bypasses the TCP stack. `inproc` is the fastest option but requires running server and client in the same process.
+
+#### ZMQ Mode
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `server` | Run as server (waits for client to connect) | Server process |
+| `client` | Run as client (connects to server) | Client process |
+| `single` | Run both server and client in one process | `inproc` transport only |
 
 ### MPI Options
 
@@ -188,11 +212,17 @@ mpirun -np 2 ./bandwidth-test -b mpi --sweep 64 1048576 2.0 --mpi-topology ring 
 ### IPC transport (ZMQ, faster than TCP for local)
 
 ```bash
-# Server
+# Terminal 1 - Server
 ./bandwidth-test -b zmq --zmq-mode server --zmq-transport ipc --zmq-addr /tmp/bw-test
 
-# Client
+# Terminal 2 - Client
 ./bandwidth-test -b zmq --zmq-mode client --zmq-transport ipc --zmq-addr /tmp/bw-test
+```
+
+### inproc transport (fastest, single process)
+
+```bash
+./bandwidth-test -b zmq --zmq-mode single --zmq-transport inproc --zmq-addr bw-test -s 1024 -n 1000
 ```
 
 ### All MPI topologies

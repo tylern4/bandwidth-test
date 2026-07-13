@@ -13,7 +13,7 @@ enum class TransferMode { SINGLE, CHUNKED };
 
 enum class MpTopology { PING_PONG, RING, ALL_TO_ALL, STAR };
 
-enum class ZmqMode { SERVER, CLIENT };
+enum class ZmqMode { SERVER, CLIENT, SINGLE };
 
 struct Config {
     Backend backend = Backend::ZMQ;

@@ -46,17 +46,36 @@ std::string ZmqTester::full_addr(const std::string& addr) {
     if (transport_ == "ipc") {
         return "ipc://" + addr;
     }
+    if (transport_ == "inproc") {
+        return "inproc://" + addr;
+    }
     return addr;
 }
 
 bool ZmqTester::setup() {
     context_ = std::make_unique<zmq::context_t>(1);
     auto type = to_socket_type(socket_type_);
-    socket_ = std::make_unique<zmq::socket_t>(*context_, type);
-
     std::string fa = full_addr(addr_);
 
-    if (mode_ == ZmqMode::SERVER) {
+    if (mode_ == ZmqMode::SINGLE) {
+        server_socket_ = std::make_unique<zmq::socket_t>(*context_, type);
+        client_socket_ = std::make_unique<zmq::socket_t>(*context_, type);
+
+        server_socket_->bind(fa);
+        client_socket_->set(zmq::sockopt::connect_timeout, 10000);
+        client_socket_->connect(fa);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        if (socket_type_ == "pair") {
+            zmq::message_t msg(1);
+            std::memset(msg.data(), 1, 1);
+            client_socket_->send(msg, zmq::send_flags::none);
+
+            zmq::message_t recv_msg;
+            server_socket_->recv(recv_msg, zmq::recv_flags::none);
+        }
+    } else if (mode_ == ZmqMode::SERVER) {
+        socket_ = std::make_unique<zmq::socket_t>(*context_, type);
         socket_->bind(fa);
 
         if (socket_type_ == "pair") {
@@ -71,6 +90,7 @@ bool ZmqTester::setup() {
             socket_->recv(msg, zmq::recv_flags::none);
         }
     } else {
+        socket_ = std::make_unique<zmq::socket_t>(*context_, type);
         socket_->set(zmq::sockopt::connect_timeout, 10000);
         socket_->connect(fa);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -103,7 +123,49 @@ TestResult ZmqTester::run_single(size_t message_size,
 
             auto start = chrono_clock();
 
-            if (mode_ == ZmqMode::SERVER) {
+            if (mode_ == ZmqMode::SINGLE) {
+                size_t remaining = message_size;
+                const char* data = buf.data();
+                while (remaining > 0) {
+                    size_t to_send = std::min(chunk_size, remaining);
+                    zmq::message_t send_msg(to_send);
+                    std::memcpy(send_msg.data(), data, to_send);
+                    server_socket_->send(send_msg, zmq::send_flags::none);
+                    data += to_send;
+                    remaining -= to_send;
+                }
+
+                remaining = message_size;
+                while (remaining > 0) {
+                    size_t to_recv = std::min(chunk_size, remaining);
+                    zmq::message_t recv_msg;
+                    server_socket_->recv(recv_msg, zmq::recv_flags::none);
+                    size_t actual = recv_msg.size();
+                    if (actual > to_recv) actual = to_recv;
+                    remaining -= actual;
+                }
+
+                remaining = message_size;
+                while (remaining > 0) {
+                    size_t to_recv = std::min(chunk_size, remaining);
+                    zmq::message_t recv_msg;
+                    client_socket_->recv(recv_msg, zmq::recv_flags::none);
+                    size_t actual = recv_msg.size();
+                    if (actual > to_recv) actual = to_recv;
+                    remaining -= actual;
+                }
+
+                remaining = message_size;
+                data = buf.data();
+                while (remaining > 0) {
+                    size_t to_send = std::min(chunk_size, remaining);
+                    zmq::message_t send_msg(to_send);
+                    std::memcpy(send_msg.data(), data, to_send);
+                    client_socket_->send(send_msg, zmq::send_flags::none);
+                    data += to_send;
+                    remaining -= to_send;
+                }
+            } else if (mode_ == ZmqMode::SERVER) {
                 size_t remaining = message_size;
                 const char* data = buf.data();
                 while (remaining > 0) {
@@ -164,7 +226,19 @@ TestResult ZmqTester::run_single(size_t message_size,
 
         auto start = chrono_clock();
 
-        if (mode_ == ZmqMode::SERVER) {
+        if (mode_ == ZmqMode::SINGLE) {
+            zmq::message_t send_msg(message_size);
+            std::memcpy(send_msg.data(), buf.data(), message_size);
+            server_socket_->send(send_msg, zmq::send_flags::none);
+
+            zmq::message_t recv_msg;
+            client_socket_->recv(recv_msg, zmq::recv_flags::none);
+
+            std::memcpy(recv_msg.data(), buf.data(), message_size);
+            client_socket_->send(recv_msg, zmq::send_flags::none);
+
+            server_socket_->recv(recv_msg, zmq::recv_flags::none);
+        } else if (mode_ == ZmqMode::SERVER) {
             zmq::message_t send_msg(message_size);
             std::memcpy(send_msg.data(), buf.data(), message_size);
             socket_->send(send_msg, zmq::send_flags::none);
@@ -191,6 +265,8 @@ TestResult ZmqTester::run_single(size_t message_size,
 }
 
 void ZmqTester::cleanup() {
+    server_socket_.reset();
+    client_socket_.reset();
     socket_.reset();
     context_.reset();
 }
